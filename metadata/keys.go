@@ -36,10 +36,12 @@ const (
 	KeyTypeECDSA_SHA2_P256_COMPAT = "ecdsa-sha2-nistp256"
 	KeyTypeECDSA_SHA2_P256        = "ecdsa"
 	KeyTypeRSASSA_PSS_SHA256      = "rsa"
+	KeyTypeSigstoreOIDC           = "sigstore-oidc"
 	KeySchemeEd25519              = "ed25519"
 	KeySchemeECDSA_SHA2_P256      = "ecdsa-sha2-nistp256"
 	KeySchemeECDSA_SHA2_P384      = "ecdsa-sha2-nistp384"
 	KeySchemeRSASSA_PSS_SHA256    = "rsassa-pss-sha256"
+	KeySchemeSigstoreFulcio       = "Fulcio"
 )
 
 // ToPublicKey generate crypto.PublicKey from metadata type Key

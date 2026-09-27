@@ -316,7 +316,59 @@ func (meta *Metadata[T]) VerifyDelegate(delegatedRole string, delegatedMetadata 
 		}
 		sign := Signature{}
 		var payload []byte
-		// convert to a PublicKey type
+		var err error
+
+		// Collect the complete signature object and canonical signed payload first:
+		// TAP-18 Sigstore verification needs the signature's bundle in addition to
+		// the raw signature bytes.
+		switch d := delegatedMetadata.(type) {
+		case *Metadata[RootType]:
+			for _, candidate := range d.Signatures {
+				if candidate.KeyID == keyID {
+					sign = candidate
+				}
+			}
+			payload, err = cjson.EncodeCanonical(d.Signed)
+		case *Metadata[SnapshotType]:
+			for _, candidate := range d.Signatures {
+				if candidate.KeyID == keyID {
+					sign = candidate
+				}
+			}
+			payload, err = cjson.EncodeCanonical(d.Signed)
+		case *Metadata[TimestampType]:
+			for _, candidate := range d.Signatures {
+				if candidate.KeyID == keyID {
+					sign = candidate
+				}
+			}
+			payload, err = cjson.EncodeCanonical(d.Signed)
+		case *Metadata[TargetsType]:
+			for _, candidate := range d.Signatures {
+				if candidate.KeyID == keyID {
+					sign = candidate
+				}
+			}
+			payload, err = cjson.EncodeCanonical(d.Signed)
+		default:
+			return &ErrType{Msg: "unknown delegated metadata type"}
+		}
+		if err != nil {
+			return err
+		}
+
+		if extensionVerifier, ok := signatureVerifierFor(key.Type); ok {
+			fingerprint, verifyErr := extensionVerifier(key, sign, payload)
+			if verifyErr != nil {
+				log.Info("Failed to verify extension signature", "role", delegatedRole, "ID", keyID, "keyType", key.Type, "error", verifyErr)
+			} else {
+				signingKeys[fingerprint] = true
+				log.Info("Verified extension signature", "role", delegatedRole, "ID", keyID, "keyType", key.Type)
+			}
+			continue
+		}
+
+		// Standard TUF keys keep the existing public-key verification path.
 		publicKey, err := key.ToPublicKey()
 		if err != nil {
 			return err
@@ -327,7 +379,6 @@ func (meta *Metadata[T]) VerifyDelegate(delegatedRole string, delegatedMetadata 
 		}
 		pubFingerprint := sha256.Sum256(pubBytes)
 		fingerprint := hex.EncodeToString(pubFingerprint[:])
-		// use corresponding hash function for key type
 		hash := crypto.Hash(0)
 		if key.Type != KeyTypeEd25519 {
 			switch key.Scheme {
@@ -339,77 +390,22 @@ func (meta *Metadata[T]) VerifyDelegate(delegatedRole string, delegatedMetadata 
 				hash = crypto.SHA256
 			}
 		}
-		// load a verifier based on that key
-		// handle RSA PSS scheme separately as the LoadVerifier function doesn't identify it correctly
-		// Note we should support RSA PSS, not RSA PKCS1v15 (which is what LoadVerifier would return)
-		// Reference: https://theupdateframework.github.io/specification/latest/#file-formats-keys
 		var verifier signature.Verifier
 		if key.Type == KeyTypeRSASSA_PSS_SHA256 {
-			// Load a verifier for rsa
 			publicKeyRSAPSS, ok := publicKey.(*rsa.PublicKey)
 			if !ok {
 				return &ErrType{Msg: "failed to convert public key to RSA PSS key"}
 			}
 			verifier, err = signature.LoadRSAPSSVerifier(publicKeyRSAPSS, hash, &rsa.PSSOptions{Hash: crypto.SHA256})
 		} else {
-			// Load a verifier for ed25519 and ecdsa
 			verifier, err = signature.LoadVerifier(publicKey, hash)
 		}
 		if err != nil {
 			return err
 		}
-		// collect the signature for that key and build the payload we'll verify
-		// based on the Signed part of the delegated metadata
-		switch d := delegatedMetadata.(type) {
-		case *Metadata[RootType]:
-			for _, signature := range d.Signatures {
-				if signature.KeyID == keyID {
-					sign = signature
-				}
-			}
-			payload, err = cjson.EncodeCanonical(d.Signed)
-			if err != nil {
-				return err
-			}
-		case *Metadata[SnapshotType]:
-			for _, signature := range d.Signatures {
-				if signature.KeyID == keyID {
-					sign = signature
-				}
-			}
-			payload, err = cjson.EncodeCanonical(d.Signed)
-			if err != nil {
-				return err
-			}
-		case *Metadata[TimestampType]:
-			for _, signature := range d.Signatures {
-				if signature.KeyID == keyID {
-					sign = signature
-				}
-			}
-			payload, err = cjson.EncodeCanonical(d.Signed)
-			if err != nil {
-				return err
-			}
-		case *Metadata[TargetsType]:
-			for _, signature := range d.Signatures {
-				if signature.KeyID == keyID {
-					sign = signature
-				}
-			}
-			payload, err = cjson.EncodeCanonical(d.Signed)
-			if err != nil {
-				return err
-			}
-		default:
-			return &ErrType{Msg: "unknown delegated metadata type"}
-		}
-		// verify if the signature for that payload corresponds to the given key
 		if err := verifier.VerifySignature(bytes.NewReader(sign.Signature), bytes.NewReader(payload)); err != nil {
-			// failed to verify the metadata with that key ID
 			log.Info("Failed to verify role with key ID", "role", delegatedRole, "ID", keyID)
 		} else {
-			// save the verified public-key fingerprint only if verification passed
 			signingKeys[fingerprint] = true
 			log.Info("Verified with key", "role", delegatedRole, "ID", keyID)
 		}

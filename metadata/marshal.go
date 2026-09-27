@@ -18,6 +18,7 @@
 package metadata
 
 import (
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -359,17 +360,41 @@ func (s Signature) MarshalJSON() ([]byte, error) {
 }
 
 func (s *Signature) UnmarshalJSON(data []byte) error {
-	type Alias Signature
-	var a Alias
-	if err := json.Unmarshal(data, &a); err != nil {
+	var core struct {
+		KeyID string `json:"keyid"`
+		Sig   string `json:"sig"`
+	}
+	if err := json.Unmarshal(data, &core); err != nil {
 		return err
 	}
-	*s = Signature(a)
+	if core.KeyID == "" {
+		return errors.New("tuf: signature keyid is empty")
+	}
 
 	var dict map[string]any
 	if err := json.Unmarshal(data, &dict); err != nil {
 		return err
 	}
+
+	var sig []byte
+	var err error
+	if _, hasBundle := dict["bundle"]; hasBundle {
+		// TAP-18 specifies hex, while current TUF-on-CI/securesystemslib
+		// serializes Sigstore's message signature as standard base64.
+		sig, err = base64.StdEncoding.DecodeString(core.Sig)
+		if err != nil {
+			sig, err = hex.DecodeString(core.Sig)
+		}
+	} else {
+		// Standard TUF signatures remain strict hex.
+		sig, err = hex.DecodeString(core.Sig)
+	}
+	if err != nil {
+		return err
+	}
+
+	s.KeyID = core.KeyID
+	s.Signature = HexBytes(sig)
 	delete(dict, "keyid")
 	delete(dict, "sig")
 	s.UnrecognizedFields = dict
@@ -381,7 +406,9 @@ func (kv KeyVal) MarshalJSON() ([]byte, error) {
 	if len(kv.UnrecognizedFields) != 0 {
 		copyMapValues(kv.UnrecognizedFields, dict)
 	}
-	dict["public"] = kv.PublicKey
+	if kv.PublicKey != "" {
+		dict["public"] = kv.PublicKey
+	}
 	return json.Marshal(dict)
 }
 
